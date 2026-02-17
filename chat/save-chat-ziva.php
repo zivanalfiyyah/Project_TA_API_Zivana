@@ -5,62 +5,80 @@ include "../config/connect-ziva.php";
 header('Content-Type: application/json');
 
 if (!isset($_SESSION['id_user'])) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Unauthorized"
-    ]);
+    echo json_encode(["status"=>"error","message"=>"Not logged in"]);
+    exit;
+}
+
+$raw = file_get_contents("php://input");
+$data = json_decode($raw, true);
+
+$msg    = trim($data['msg'] ?? "");
+$fitur  = $data['fitur'] ?? "";
+$mode   = $data['mode'] ?? null;
+$bahasa = $data['bahasa'] ?? null;
+$gaya   = $data['gaya'] ?? null;
+
+if ($msg === "" || $fitur === "") {
+    echo json_encode(["status"=>"error","message"=>"Pesan dan fitur wajib diisi"]);
     exit;
 }
 
 $id_user = $_SESSION['id_user'];
 
-$data = json_decode(file_get_contents("php://input"), true);
+/* ---------------------------
+   SIMULASI OUTPUT AI (DEMO)
+   Kamu tinggal ganti bagian ini kalau nanti pakai API AI beneran
+----------------------------*/
 
-$msg   = trim($data['msg'] ?? "");
-$fitur = trim($data['fitur'] ?? "");
+$output_text = "";
+$ringkasan = null;
 
-if ($msg === "" || $fitur === "") {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Pesan atau fitur kosong"
-    ]);
+if ($fitur === "rewrite") {
+    $output_text = "✅ [Rewrite Mode: $mode]\n\n" . $msg;
+    $ringkasan = "Rewrite dilakukan dengan mode: $mode";
+} else if ($fitur === "adaptation") {
+    $output_text = "🌍 [Adaptation: $bahasa | $gaya]\n\n" . $msg;
+    $ringkasan = "Adaptasi bahasa ke: $bahasa, gaya: $gaya";
+} else {
+    echo json_encode(["status"=>"error","message"=>"Fitur tidak valid"]);
     exit;
 }
 
-$hasil_ai = "Hasil AI untuk: \"" . $msg . "\"";
+/* ---------------------------
+   1) INSERT KE chat_zivana
+----------------------------*/
 
-$sqlChat = "INSERT INTO chat_zivana (id_user, input_text, fitur)
-            VALUES (?, ?, ?)";
+$stmt = $conn->prepare("
+    INSERT INTO chat_zivana (id_user, input_text, fitur, mode_rewrite, bahasa_tujuan, gaya_bahasa)
+    VALUES (?, ?, ?, ?, ?, ?)
+");
 
-$stmtChat = mysqli_prepare($conn, $sqlChat);
-mysqli_stmt_bind_param($stmtChat, "iss", $id_user, $msg, $fitur);
+$stmt->bind_param("isssss", $id_user, $msg, $fitur, $mode, $bahasa, $gaya);
 
-if (!mysqli_stmt_execute($stmtChat)) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Gagal simpan chat"
-    ]);
+if (!$stmt->execute()) {
+    echo json_encode(["status"=>"error","message"=>"Gagal simpan chat"]);
     exit;
 }
 
-$id_chat = mysqli_insert_id($conn);
+$id_chat = $conn->insert_id;
 
-$sqlResult = "INSERT INTO result_zivana (id_chat, output_text)
-              VALUES (?, ?)";
+/* ---------------------------
+   2) INSERT KE result_zivana
+----------------------------*/
 
-$stmtResult = mysqli_prepare($conn, $sqlResult);
-mysqli_stmt_bind_param($stmtResult, "is", $id_chat, $hasil_ai);
+$stmt2 = $conn->prepare("
+    INSERT INTO result_zivana (id_chat, output_text, ringkasan_perubahan)
+    VALUES (?, ?, ?)
+");
 
-if (!mysqli_stmt_execute($stmtResult)) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Gagal simpan result"
-    ]);
+$stmt2->bind_param("iss", $id_chat, $output_text, $ringkasan);
+
+if (!$stmt2->execute()) {
+    echo json_encode(["status"=>"error","message"=>"Chat tersimpan, tapi result gagal"]);
     exit;
 }
 
 echo json_encode([
-    "status" => "success",
-    "id_chat" => $id_chat,
-    "output_text" => $hasil_ai
+    "status"=>"success",
+    "id_chat"=>$id_chat
 ]);

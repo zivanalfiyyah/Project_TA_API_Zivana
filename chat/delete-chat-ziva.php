@@ -5,63 +5,44 @@ include "../config/connect-ziva.php";
 header('Content-Type: application/json');
 
 if (!isset($_SESSION['id_user'])) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Unauthorized"
-    ]);
+    echo json_encode(["status"=>"error","message"=>"Not logged in"]);
+    exit;
+}
+
+$raw = file_get_contents("php://input");
+$data = json_decode($raw, true);
+
+$id_chat = intval($data['id_chat'] ?? 0);
+
+if ($id_chat <= 0) {
+    echo json_encode(["status"=>"error","message"=>"ID chat invalid"]);
     exit;
 }
 
 $id_user = $_SESSION['id_user'];
 
-$data = json_decode(file_get_contents("php://input"), true);
-$id_chat = $data['id'] ?? 0;
+/* pastiin chat ini milik user yg login */
+$cek = $conn->prepare("SELECT id_chat FROM chat_zivana WHERE id_chat=? AND id_user=?");
+$cek->bind_param("ii", $id_chat, $id_user);
+$cek->execute();
+$res = $cek->get_result();
 
-if (!$id_chat) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "ID chat tidak valid"
-    ]);
+if ($res->num_rows === 0) {
+    echo json_encode(["status"=>"error","message"=>"Chat tidak ditemukan"]);
     exit;
 }
 
-$cek = mysqli_prepare(
-    $conn,
-    "SELECT id_chat FROM chat_zivana WHERE id_chat = ? AND id_user = ?"
-);
-mysqli_stmt_bind_param($cek, "ii", $id_chat, $id_user);
-mysqli_stmt_execute($cek);
-mysqli_stmt_store_result($cek);
+/* hapus result dulu */
+$del1 = $conn->prepare("DELETE FROM result_zivana WHERE id_chat=?");
+$del1->bind_param("i", $id_chat);
+$del1->execute();
 
-if (mysqli_stmt_num_rows($cek) === 0) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Chat tidak ditemukan"
-    ]);
-    exit;
+/* hapus chat */
+$del2 = $conn->prepare("DELETE FROM chat_zivana WHERE id_chat=? AND id_user=?");
+$del2->bind_param("ii", $id_chat, $id_user);
+
+if ($del2->execute()) {
+    echo json_encode(["status"=>"success"]);
+} else {
+    echo json_encode(["status"=>"error","message"=>"Gagal hapus chat"]);
 }
-
-$stmtResult = mysqli_prepare(
-    $conn,
-    "DELETE FROM result_zivana WHERE id_chat = ?"
-);
-mysqli_stmt_bind_param($stmtResult, "i", $id_chat);
-mysqli_stmt_execute($stmtResult);
-
-$stmtChat = mysqli_prepare(
-    $conn,
-    "DELETE FROM chat_zivana WHERE id_chat = ?"
-);
-mysqli_stmt_bind_param($stmtChat, "i", $id_chat);
-
-if (!mysqli_stmt_execute($stmtChat)) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Gagal menghapus chat"
-    ]);
-    exit;
-}
-
-echo json_encode([
-    "status" => "success"
-]);
